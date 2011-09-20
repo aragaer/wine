@@ -185,6 +185,10 @@ PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(
 static void CertDataContext_Free(void *context)
 {
     PCERT_CONTEXT certContext = context;
+    if (certContext->hCertStore)
+    {
+        DPRINTF("We should close the store %p now\n", certContext->hCertStore);
+    }
 
     CryptMemFree(certContext->pbCertEncoded);
     LocalFree(certContext->pCertInfo);
