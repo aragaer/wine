@@ -323,6 +323,16 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
     if (!datum)
         return SEC_E_INTERNAL_ERROR;
 
+    if (list_size == 1) // No intermediate certificates
+    {
+        *cert = CertCreateCertificateContext(X509_ASN_ENCODING, datum->data,
+                                             datum->size);
+        if (!*cert)
+            return GetLastError();
+        else
+            return SEC_E_OK;
+    }
+
     temp_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, NULL, 0, NULL);
 
     if (!temp_store)
