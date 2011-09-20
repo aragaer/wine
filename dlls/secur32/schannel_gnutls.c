@@ -315,19 +315,37 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
     gnutls_session_t s = (gnutls_session_t)session;
     unsigned int list_size;
     const gnutls_datum_t *datum;
+    int i, ret;
+    HCERTSTORE temp_store;
+    DWORD err;
 
     datum = pgnutls_certificate_get_peers(s, &list_size);
-    if (datum)
-    {
-        *cert = CertCreateCertificateContext(X509_ASN_ENCODING, datum->data,
-                                             datum->size);
-        if (!*cert)
-            return GetLastError();
-        else
-            return SEC_E_OK;
-    }
-    else
+    if (!datum)
         return SEC_E_INTERNAL_ERROR;
+
+    temp_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, NULL, 0, NULL);
+
+    if (!temp_store)
+        return GetLastError();
+
+    for (i = 0; i < list_size; i++)
+    {
+        ret = CertAddEncodedCertificateToStore(temp_store,
+            X509_ASN_ENCODING, datum[i].data, datum[i].size,
+            CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : cert);
+
+        if (!ret)
+           goto out_free_store;
+    }
+
+    // At this moment ref counter on this cert is 2 while it should be 1
+    CertFreeCertificateContext(*cert);
+
+    return SEC_E_OK;
+out_free_store:
+    err = GetLastError();
+    CertCloseStore(temp_store, CERT_CLOSE_STORE_FORCE_FLAG);
+    return err;
 }
 
 SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
