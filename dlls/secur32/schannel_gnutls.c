@@ -315,7 +315,7 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
     gnutls_session_t s = (gnutls_session_t)session;
     unsigned int list_size;
     const gnutls_datum_t *datum;
-    int i, ret;
+    int i;
     HCERTSTORE temp_store;
     DWORD err;
 
@@ -339,14 +339,10 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
         return GetLastError();
 
     for (i = 0; i < list_size; i++)
-    {
-        ret = CertAddEncodedCertificateToStore(temp_store,
-            X509_ASN_ENCODING, datum[i].data, datum[i].size,
-            CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : cert);
-
-        if (!ret)
+        if (!CertAddEncodedCertificateToStore(temp_store,
+                X509_ASN_ENCODING, datum[i].data, datum[i].size,
+                CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : cert))
            goto out_free_store;
-    }
 
     CertCloseStore(temp_store, 0);
 
