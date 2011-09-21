@@ -348,8 +348,7 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
            goto out_free_store;
     }
 
-    // At this moment ref counter on this cert is 2 while it should be 1
-    CertFreeCertificateContext(*cert);
+    CertCloseStore(temp_store, 0);
 
     return SEC_E_OK;
 out_free_store:

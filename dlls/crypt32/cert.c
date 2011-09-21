@@ -179,6 +179,8 @@ PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(
         return NULL;
 
     Context_AddRef((void *)pCertContext, sizeof(CERT_CONTEXT));
+    if (pCertContext->hCertStore)
+        CertDuplicateStore(pCertContext->hCertStore);
     return pCertContext;
 }
 
@@ -193,12 +195,19 @@ static void CertDataContext_Free(void *context)
 BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     BOOL ret = TRUE;
+    WINECRYPT_CERTSTORE *hcs = pCertContext ? pCertContext->hCertStore : NULL;
 
     TRACE("(%p)\n", pCertContext);
 
     if (pCertContext)
-        ret = Context_Release((void *)pCertContext, sizeof(CERT_CONTEXT),
-         CertDataContext_Free);
+    {
+        if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC)
+            ret = CertCloseStore(hcs, 0);
+
+        if (ret)
+            ret = Context_Release((void *)pCertContext, sizeof(CERT_CONTEXT),
+             CertDataContext_Free);
+    }
     return ret;
 }
 
