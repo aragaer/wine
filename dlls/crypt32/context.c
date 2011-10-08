@@ -93,9 +93,11 @@ void *Context_CreateLinkContext(unsigned int contextSize, void *linked, unsigned
         linkContext->ref = 1;
         linkContext->type = ContextTypeLink;
         linkContext->linked = linkedBase;
-        if (addRef)
+        if (addRef) {
+//            DPRINTF("FIXME: this might give us problems\n");
             Context_AddRef(linked, contextSize);
-        TRACE("%p's ref count is %d\n", context, linkContext->ref);
+        }
+//        DPRINTF("%s: %p's ref count is %d\n", __func__, context, linkContext->ref);
     }
     TRACE("returning %p\n", context);
     return context;
@@ -106,7 +108,8 @@ void Context_AddRef(void *context, size_t contextSize)
     PBASE_CONTEXT baseContext = BASE_CONTEXT_FROM_CONTEXT(context, contextSize);
 
     InterlockedIncrement(&baseContext->ref);
-    TRACE("%p's ref count is %d\n", context, baseContext->ref);
+//    DPRINTF("%s: %p's ref count is %d\n", __func__, context, baseContext->ref);
+#if 0
     if (baseContext->type == ContextTypeLink)
     {
         void *linkedContext = Context_GetLinkedContext(context, contextSize);
@@ -137,6 +140,7 @@ void Context_AddRef(void *context, size_t contextSize)
             TRACE("%p's ref count is %d\n", linkedContext, linkedBase->ref);
         }
     }
+#endif
 }
 
 void *Context_GetExtra(const void *context, size_t contextSize)
@@ -177,6 +181,7 @@ BOOL Context_Release(void *context, size_t contextSize,
         ERR("%p's ref count is %d\n", context, base->ref);
         return FALSE;
     }
+#if 0
     if (base->type == ContextTypeLink)
     {
         /* The linked context is of the same type as this, so release
@@ -186,9 +191,10 @@ BOOL Context_Release(void *context, size_t contextSize,
          ((PLINK_CONTEXT)base)->linked, contextSize), contextSize,
          dataContextFree);
     }
+#endif
     if (InterlockedDecrement(&base->ref) == 0)
     {
-        TRACE("freeing %p\n", context);
+//        DPRINTF("%s: freeing %p\n", __func__, context);
         if (base->type == ContextTypeData)
         {
             ContextPropertyList_Free(((PDATA_CONTEXT)base)->properties);
@@ -196,8 +202,8 @@ BOOL Context_Release(void *context, size_t contextSize,
         }
         CryptMemFree(context);
     }
-    else
-        TRACE("%p's ref count is %d\n", context, base->ref);
+//    else
+//        DPRINTF("%s: %p's ref count is %d\n", __func__, context, base->ref);
     return ret;
 }
 
@@ -260,8 +266,10 @@ void *ContextList_Add(struct ContextList *list, void *toLink, void *toReplace)
 
     TRACE("(%p, %p, %p)\n", list, toLink, toReplace);
 
+//    DPRINTF("%s is going to call Context_CreateLinkContext now\n", __func__);
     context = Context_CreateLinkContext(list->contextSize, toLink,
      sizeof(struct list), TRUE);
+//    DPRINTF("%s is back from Context_CreateLinkContext now\n", __func__);
     if (context)
     {
         struct list *entry = ContextList_ContextToEntry(list, context);

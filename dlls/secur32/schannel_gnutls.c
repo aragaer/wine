@@ -351,8 +351,9 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
                 CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : cert))
            goto out_free_store;
 
-    // At this moment ref counter on this cert is 2 while it should be 1
-    CertFreeCertificateContext(*cert);
+    CertCloseStore(temp_store, 0);
+
+    DPRINTF("\nAll set. We will need to verify that the store %p is closed when the cert %p is freed\n", temp_store, *cert);
 
     return SEC_E_OK;
 out_free_store:

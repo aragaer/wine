@@ -35,6 +35,9 @@ WINE_DECLARE_DEBUG_CHANNEL(chain);
 
 static HCERTCHAINENGINE CRYPT_defaultChainEngine;
 
+extern PWINECRYPT_CERTSTORE store_to_watch;
+PWINECRYPT_CERTSTORE world_to_watch = NULL;
+
 /* This represents a subset of a certificate chain engine:  it doesn't include
  * the "hOther" store described by MSDN, because I'm not sure how that's used.
  * It also doesn't include the "hTrust" store, because I don't yet implement
@@ -365,6 +368,7 @@ static BOOL CRYPT_IsCertificateSelfSigned(PCCERT_CONTEXT cert)
 
 static void CRYPT_FreeChainElement(PCERT_CHAIN_ELEMENT element)
 {
+    DPRINTF("      @ %s: Free cert %p\n", __func__, element->pCertContext);
     CertFreeCertificateContext(element->pCertContext);
     CryptMemFree(element);
 }
@@ -1704,8 +1708,9 @@ static void dump_element(PCCERT_CONTEXT cert)
         TRACE_(chain)("issued to %s\n", debugstr_w(name));
         CryptMemFree(name);
     }
-    TRACE_(chain)("valid from %s to %s\n",
-     filetime_to_str(&cert->pCertInfo->NotBefore),
+    TRACE_(chain)("valid from %s",
+     filetime_to_str(&cert->pCertInfo->NotBefore));
+    TRACE_(chain)(" to %s\n",
      filetime_to_str(&cert->pCertInfo->NotAfter));
     TRACE_(chain)("%d extensions\n", cert->pCertInfo->cExtension);
     for (i = 0; i < cert->pCertInfo->cExtension; i++)
@@ -1971,12 +1976,23 @@ static void CRYPT_CheckSimpleChain(PCertificateChainEngine engine,
     CRYPT_CombineTrustStatus(&chain->TrustStatus, &rootElement->TrustStatus);
 }
 
+PCCERT_CONTEXT watch_for = NULL;
+int watch_depth = 0;
+void *id_to_watch = NULL;
+
 static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
  PCCERT_CONTEXT prevIssuer, DWORD *infoStatus)
 {
     PCCERT_CONTEXT issuer = NULL;
     PCERT_EXTENSION ext;
     DWORD size;
+    int want_to_trace = subject == watch_for;
+
+    if (want_to_trace) {
+        DPRINTF("\n@@@ We're carefully watching at cert %p which is number %d in our chain. No, really\n", subject, watch_depth);
+        if (watch_depth == 2)
+            DPRINTF("This should be the last cert!\n");
+    }
 
     *infoStatus = 0;
     if ((ext = CertFindExtension(szOID_AUTHORITY_KEY_IDENTIFIER,
@@ -1995,6 +2011,8 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
 
             if (info->CertIssuer.cbData && info->CertSerialNumber.cbData)
             {
+                if (want_to_trace)
+                    DPRINTF("Path 1\n");
                 id.dwIdChoice = CERT_ID_ISSUER_SERIAL_NUMBER;
                 memcpy(&id.u.IssuerSerialNumber.Issuer, &info->CertIssuer,
                  sizeof(CERT_NAME_BLOB));
@@ -2011,6 +2029,8 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
             }
             else if (info->KeyId.cbData)
             {
+                if (want_to_trace)
+                    DPRINTF("Path 2\n");
                 id.dwIdChoice = CERT_ID_KEY_IDENTIFIER;
                 memcpy(&id.u.KeyId, &info->KeyId, sizeof(CRYPT_HASH_BLOB));
                 issuer = CertFindCertificateInStore(store,
@@ -2045,6 +2065,8 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
                 PCERT_ALT_NAME_ENTRY directoryName = NULL;
                 DWORD i;
 
+                if (want_to_trace)
+                    DPRINTF("Path 3\n");
                 for (i = 0; !directoryName &&
                  i < info->AuthorityCertIssuer.cAltEntry; i++)
                     if (info->AuthorityCertIssuer.rgAltEntry[i].dwAltNameChoice
@@ -2073,6 +2095,15 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
             }
             else if (info->KeyId.cbData)
             {
+                if (want_to_trace) {
+                    int i;
+                    DPRINTF("Path 4. We're looking for a cert with a certain id .... let's watch for id %p\n", &id);
+                    id_to_watch = &id;
+                    DPRINTF("And just in case, the id we're lookign for is: ");
+                    for (i = 0; i < info->KeyId.cbData; i++)
+                        DPRINTF("%02X", info->KeyId.pbData[i]);
+                    DPRINTF("\n");
+                }
                 id.dwIdChoice = CERT_ID_KEY_IDENTIFIER;
                 memcpy(&id.u.KeyId, &info->KeyId, sizeof(CRYPT_HASH_BLOB));
                 issuer = CertFindCertificateInStore(store,
@@ -2080,7 +2111,7 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
                  prevIssuer);
                 if (issuer)
                 {
-                    TRACE_(chain)("issuer found by key id\n");
+                    DPRINTF("issuer for %p found by key id and is %p\n", subject, issuer);
                     *infoStatus = CERT_TRUST_HAS_KEY_MATCH_ISSUER;
                 }
             }
@@ -2089,6 +2120,8 @@ static PCCERT_CONTEXT CRYPT_GetIssuer(HCERTSTORE store, PCCERT_CONTEXT subject,
     }
     else
     {
+        if (want_to_trace)
+            DPRINTF("Path 5\n");
         issuer = CertFindCertificateInStore(store,
          subject->dwCertEncodingType, 0, CERT_FIND_SUBJECT_NAME,
          &subject->pCertInfo->Issuer, prevIssuer);
@@ -2121,11 +2154,15 @@ static BOOL CRYPT_BuildSimpleChain(const CertificateChainEngine *engine,
              * close the enumeration that found it
              */
             CertFreeCertificateContext(issuer);
+            if (watch_for == cert) {
+                watch_for = issuer;
+                watch_depth++;
+            }
             cert = issuer;
         }
         else
         {
-            TRACE_(chain)("Couldn't find issuer, halting chain creation\n");
+            DPRINTF("Couldn't find issuer for %p, halting chain creation\n", cert);
             chain->TrustStatus.dwErrorStatus |= CERT_TRUST_IS_PARTIAL_CHAIN;
             break;
         }
@@ -2180,6 +2217,7 @@ static BOOL CRYPT_BuildCandidateChainFromCert(HCERTCHAINENGINE hChainEngine,
     HCERTSTORE world;
     BOOL ret;
 
+
     world = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
      CERT_STORE_CREATE_NEW_FLAG, NULL);
     CertAddStoreToCollection(world, engine->hWorld, 0, 0);
@@ -2188,6 +2226,11 @@ static BOOL CRYPT_BuildCandidateChainFromCert(HCERTCHAINENGINE hChainEngine,
     /* FIXME: only simple chains are supported for now, as CTLs aren't
      * supported yet.
      */
+    if (hAdditionalStore == store_to_watch)
+        world_to_watch = world;
+    else
+        world_to_watch = NULL;
+
     if ((ret = CRYPT_GetSimpleChainForCert(engine, world, cert, pTime,
      &simpleChain)))
     {
@@ -2241,6 +2284,7 @@ static PCERT_SIMPLE_CHAIN CRYPT_CopySimpleChainToElement(
                 if (element)
                 {
                     *element = *chain->rgpElement[i];
+                    DPRINTF("      @ %s: Duplicate cert %p\n", __func__, chain->rgpElement[i]->pCertContext);
                     element->pCertContext = CertDuplicateCertificateContext(
                      chain->rgpElement[i]->pCertContext);
                     /* Reset the trust status of the copied element, it'll get
@@ -2367,6 +2411,7 @@ static PCertificateChain CRYPT_BuildAlternateContextFromChain(
 {
     PCertificateChainEngine engine = (PCertificateChainEngine)hChainEngine;
     PCertificateChain alternate;
+    int want_to_trace = hAdditionalStore == store_to_watch;
 
     TRACE("(%p, %s, %p, %p)\n", hChainEngine, debugstr_filetime(pTime),
      hAdditionalStore, chain);
@@ -2385,6 +2430,9 @@ static PCertificateChain CRYPT_BuildAlternateContextFromChain(
         DWORD i, j, infoStatus;
         PCCERT_CONTEXT alternateIssuer = NULL;
 
+        if (want_to_trace)
+            DPRINTF("We've got a chance to get an alternate chain now\n");
+
         alternate = NULL;
         for (i = 0; !alternateIssuer && i < chain->context.cChain; i++)
             for (j = 0; !alternateIssuer &&
@@ -2395,8 +2443,14 @@ static PCertificateChain CRYPT_BuildAlternateContextFromChain(
                 PCCERT_CONTEXT prevIssuer = CertDuplicateCertificateContext(
                  chain->context.rgpChain[i]->rgpElement[j + 1]->pCertContext);
 
+                if (want_to_trace) {
+                    DPRINTF("checking for alternate issuer ... from ref = %d\n", store_to_watch->ref);
+                    DPRINTF("We're going to lose prevIssuer %p from store %p\n", prevIssuer, prevIssuer->hCertStore);
+                }
                 alternateIssuer = CRYPT_GetIssuer(prevIssuer->hCertStore,
                  subject, prevIssuer, &infoStatus);
+                if (want_to_trace)
+                    DPRINTF("Got alternate issuer %p ... from ref = %d\n", alternateIssuer, store_to_watch->ref);
             }
         if (alternateIssuer)
         {
@@ -2794,6 +2848,9 @@ static void dump_chain_para(const CERT_CHAIN_PARA *pChainPara)
     }
 }
 
+extern PCCERT_CONTEXT context_to_free;
+extern PWINECRYPT_CERTSTORE store_to_close;
+
 BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
  PCCERT_CONTEXT pCertContext, LPFILETIME pTime, HCERTSTORE hAdditionalStore,
  PCERT_CHAIN_PARA pChainPara, DWORD dwFlags, LPVOID pvReserved,
@@ -2801,8 +2858,15 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
 {
     BOOL ret;
     PCertificateChain chain = NULL;
+    int want_to_trace = hChainEngine == NULL /*hAdditionalStore == store_to_watch*/;
 
-    TRACE("(%p, %p, %s, %p, %p, %08x, %p, %p)\n", hChainEngine, pCertContext,
+    if (want_to_trace) {
+        context_to_free = pCertContext;
+        store_to_close = hAdditionalStore;
+    }
+
+    if (want_to_trace)
+    DPRINTF("%s(%p, %p, %s, %p, %p, %08x, %p, %p)\n", __func__, hChainEngine, pCertContext,
      debugstr_filetime(pTime), hAdditionalStore, pChainPara, dwFlags,
      pvReserved, ppChainContext);
 
@@ -2824,14 +2888,22 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
     if (TRACE_ON(chain))
         dump_chain_para(pChainPara);
     /* FIXME: what about HCCE_LOCAL_MACHINE? */
+    if (want_to_trace) {
+        DPRINTF("\n!!! Let's get the chain for %p now. Add store = %p!\n", pCertContext, hAdditionalStore);
+        watch_for = pCertContext;
+    }
     ret = CRYPT_BuildCandidateChainFromCert(hChainEngine, pCertContext, pTime,
      hAdditionalStore, &chain);
+    if (want_to_trace)
+        DPRINTF("\n!!! Got candidate chain result: %p\n\n", ret ? chain : NULL);
     if (ret)
     {
         PCertificateChain alternate = NULL;
         PCERT_CHAIN_CONTEXT pChain;
 
         do {
+            if (want_to_trace)
+                DPRINTF("    > Build alternate now, from's ref is %d right now\n", store_to_watch->ref);
             alternate = CRYPT_BuildAlternateContextFromChain(hChainEngine,
              pTime, hAdditionalStore, chain);
 
@@ -2839,6 +2911,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
              * chain, to avoid loops in alternate chain creation.
              * The highest-quality chain is chosen at the end.
              */
+            if (want_to_trace)
+                DPRINTF("    > Got alternate = %p. from's ref = %d now\n", alternate, store_to_watch->ref);
             if (alternate)
                 ret = CRYPT_AddAlternateChainToChain(chain, alternate);
         } while (ret && alternate);
@@ -2856,6 +2930,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
         else
             CertFreeCertificateChain(pChain);
     }
+    if (want_to_trace)
+        DPRINTF("Got chain for %p. Bailing out!\n", pCertContext);
     TRACE("returning %d\n", ret);
     return ret;
 }

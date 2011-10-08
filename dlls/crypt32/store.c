@@ -148,6 +148,9 @@ BOOL WINAPI I_CertUpdateStore(HCERTSTORE store1, HCERTSTORE store2, DWORD unk0,
     return TRUE;
 }
 
+extern HCERTSTORE store_to_watch;
+extern void dump_cert_id(PCCERT_CONTEXT);
+
 static BOOL CRYPT_MemAddCert(PWINECRYPT_CERTSTORE store, void *cert,
  void *toReplace, const void **ppStoreContext)
 {
@@ -155,6 +158,12 @@ static BOOL CRYPT_MemAddCert(PWINECRYPT_CERTSTORE store, void *cert,
     PCERT_CONTEXT context;
 
     TRACE("(%p, %p, %p, %p)\n", store, cert, toReplace, ppStoreContext);
+
+    if (/*store == store_to_watch && */cert) {
+        DPRINTF("Cert with ");
+        dump_cert_id((PCCERT_CONTEXT) cert);
+        DPRINTF(" is added to store %p\n", store);
+    }
 
     context = ContextList_Add(ms->certs, cert, toReplace);
     if (context)
@@ -171,13 +180,13 @@ static void *CRYPT_MemEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     WINE_MEMSTORE *ms = (WINE_MEMSTORE *)store;
     void *ret;
 
-    TRACE("(%p, %p)\n", store, pPrev);
+//    DPRINTF("%s(%p (ref = %d), %p)\n", __func__, store, ms->hdr.ref, pPrev);
 
     ret = ContextList_Enum(ms->certs, pPrev);
     if (!ret)
         SetLastError(CRYPT_E_NOT_FOUND);
 
-    TRACE("returning %p\n", ret);
+//    DPRINTF("%s returning %p, ref=%d\n", __func__, ret, ms->hdr.ref);
     return ret;
 }
 
@@ -1205,20 +1214,35 @@ PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE hCertStore,
     return ret;
 }
 
+struct WINECRYPT_PROVSTORE {
+    WINECRYPT_CERTSTORE hdr;
+    DWORD padding;
+    PWINECRYPT_CERTSTORE memStore;
+};
+
+extern PWINECRYPT_CERTSTORE store_to_close;
+
 HCERTSTORE WINAPI CertDuplicateStore(HCERTSTORE hCertStore)
 {
     WINECRYPT_CERTSTORE *hcs = hCertStore;
 
     TRACE("(%p)\n", hCertStore);
 
-    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC)
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC) {
+        if (hcs->type == StoreTypeProvider) {
+            hcs = ((struct WINECRYPT_PROVSTORE *) hcs)->memStore;
+            DPRINTF("%p\n", hcs);
+        }
         InterlockedIncrement(&hcs->ref);
+        if (hCertStore == store_to_close || hCertStore == store_to_watch)
+            DPRINTF("%s: %p's ref is %d\n", __func__, hcs, hcs->ref);
+    }
     return hCertStore;
 }
 
 BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
 {
-    WINECRYPT_CERTSTORE *hcs = hCertStore;
+    WINECRYPT_CERTSTORE *hcs = hCertStore, *orig = NULL;
 
     TRACE("(%p, %08x)\n", hCertStore, dwFlags);
 
@@ -1228,16 +1252,26 @@ BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
     if ( hcs->dwMagic != WINE_CRYPTCERTSTORE_MAGIC )
         return FALSE;
 
+    if (hcs->type == StoreTypeProvider) {
+        orig = hcs;
+        hcs = ((struct WINECRYPT_PROVSTORE *) orig)->memStore;
+    }
+
     if (hcs->ref <= 0)
         ERR("%p's ref count is %d\n", hcs, hcs->ref);
     if (InterlockedDecrement(&hcs->ref) == 0)
     {
-        TRACE("%p's ref count is 0, freeing\n", hcs);
+        DPRINTF("%s free: %p's ref count is 0, freeing\n", __func__, hcs);
+        if (orig) {
+            hcs->ref = 1;
+            hcs = orig;
+            hcs->ref = 0;
+        }
         hcs->dwMagic = 0;
         hcs->closeStore(hcs, dwFlags);
     }
-    else
-        TRACE("%p's ref count is %d\n", hcs, hcs->ref);
+    else if (hCertStore == store_to_close || hCertStore == store_to_watch)
+        DPRINTF("%s: %p's ref count is %d\n", __func__, hcs, hcs->ref);
     return TRUE;
 }
 

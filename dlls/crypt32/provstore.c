@@ -88,6 +88,12 @@ static void *CRYPT_ProvEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     PWINE_PROVIDERSTORE ps = (PWINE_PROVIDERSTORE)store;
     void *ret;
 
+//    DPRINTF("%s(%p, %p)\n", __func__, store, pPrev);
+    if (pPrev) {
+        /* we're still dirty! */
+        ((PCERT_CONTEXT)pPrev)->hCertStore = ps->memStore;
+    }
+
     ret = ps->memStore->certs.enumContext(ps->memStore, pPrev);
     if (ret)
     {
@@ -96,6 +102,7 @@ static void *CRYPT_ProvEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
          */
         ((PCERT_CONTEXT)ret)->hCertStore = store;
     }
+//    DPRINTF("%s returning %p\n", __func__, ret);
     return ret;
 }
 

@@ -50,7 +50,7 @@ static void WINAPI CRYPT_CollectionCloseStore(HCERTSTORE store, DWORD dwFlags)
     LIST_FOR_EACH_ENTRY_SAFE(entry, next, &cs->stores, WINE_STORE_LIST_ENTRY,
      entry)
     {
-        TRACE("closing %p\n", entry);
+        DPRINTF("%s: closing %p\n", __func__, entry);
         CertCloseStore(entry->store, dwFlags);
         CryptMemFree(entry);
     }
@@ -63,8 +63,11 @@ static void *CRYPT_CollectionCreateContextFromChild(PWINE_COLLECTIONSTORE store,
  PWINE_STORE_LIST_ENTRY storeEntry, void *child, size_t contextSize,
  BOOL addRef)
 {
-    void *ret = Context_CreateLinkContext(contextSize, child,
+    void *ret;
+//    DPRINTF("%s is going to call Context_CreateLinkContext\n", __func__);
+    ret = Context_CreateLinkContext(contextSize, child,
      sizeof(PWINE_STORE_LIST_ENTRY), addRef);
+//    DPRINTF("%s is back from Context_CreateLinkContext\n", __func__);
 
     if (ret)
         *(PWINE_STORE_LIST_ENTRY *)Context_GetExtra(ret, contextSize)
@@ -133,6 +136,7 @@ static BOOL CRYPT_CollectionAddContext(PWINE_COLLECTIONSTORE store,
  * Returns NULL if the collection contains no more items or on error.
  * Assumes the collection store's lock is held.
  */
+#define REF_FROM_CONTEXT(p, s) ((LONG *)((LPBYTE)(p) + (s)))
 static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
  PWINE_STORE_LIST_ENTRY storeEntry, const CONTEXT_FUNCS *contextFuncs,
  PCWINE_CONTEXT_INTERFACE contextInterface, void *pPrev, size_t contextSize)
@@ -144,22 +148,36 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
 
     if (pPrev)
     {
-        /* Ref-counting funny business: "duplicate" (addref) the child, because
-         * the free(pPrev) below can cause the ref count to become negative.
-         */
+//        DPRINTF("Magic: get linked context for %p\n", pPrev);
         child = Context_GetLinkedContext(pPrev, contextSize);
-        contextInterface->duplicate(child);
-        child = contextFuncs->enumContext(storeEntry->store, child);
+//        DPRINTF("Good, now free %p and nothing else\n", pPrev);
+        if (*REF_FROM_CONTEXT(pPrev, sizeof(CERT_CONTEXT)) == 1)
+            // It is going to die, reduce ref counter on collection
+            InterlockedDecrement(&store->hdr.ref);
+        else
+            // otherwise - duplicate the child (so it its ref counter isnt reduced)
+            contextInterface->duplicate(child);
+        
         contextInterface->free(pPrev);
+
+//        DPRINTF("Neat, now go into enum with %p as prev\n", child);
+        child = contextFuncs->enumContext(storeEntry->store, child);
+//        DPRINTF("And now %p decrements its own ref!\n", store);
+//        DPRINTF("%s: %p's ref = %d\n", __func__, store, store->hdr.ref);
         pPrev = NULL;
     }
     else
         child = contextFuncs->enumContext(storeEntry->store, NULL);
-    if (child)
+    if (child) {
+//        DPRINTF("%s is calling CRYPT_CollectionCreateContextFromChild\n", __func__);
         ret = CRYPT_CollectionCreateContextFromChild(store, storeEntry, child,
          contextSize, FALSE);
+//        DPRINTF("%s is back from CRYPT_CollectionCreateContextFromChild\n", __func__);
+    }
     else
     {
+//        DPRINTF("%p reports: No next in %p, switching to %p\n", store, storeEntry ? storeEntry->store : NULL,
+//            storeNext ? LIST_ENTRY(storeNext, WINE_STORE_LIST_ENTRY, entry)->store : NULL);
         if (storeNext)
         {
             /* We always want the same function pointers (from certs, crls)
@@ -190,16 +208,22 @@ static BOOL CRYPT_CollectionAddCert(PWINECRYPT_CERTSTORE store, void *cert,
     BOOL ret;
     void *childContext = NULL;
     PWINE_COLLECTIONSTORE cs = (PWINE_COLLECTIONSTORE)store;
+    DPRINTF("%s: Adding cert %p to collection %p replacing %p and returning result into %p\n",
+        __func__, cert, store, toReplace, ppStoreContext);
 
     ret = CRYPT_CollectionAddContext(cs, offsetof(WINECRYPT_CERTSTORE, certs),
      cert, toReplace, sizeof(CERT_CONTEXT), &childContext);
+    DPRINTF("Successfully added context and got %p as result\n", childContext);
     if (ppStoreContext && childContext)
     {
         PWINE_STORE_LIST_ENTRY storeEntry = *(PWINE_STORE_LIST_ENTRY *)
          Context_GetExtra(childContext, sizeof(CERT_CONTEXT));
-        PCERT_CONTEXT context =
+        PCERT_CONTEXT context;
+        DPRINTF("%s is calling CRYPT_CollectionCreateContextFromChild\n", __func__);
+        context =
          CRYPT_CollectionCreateContextFromChild(cs, storeEntry, childContext,
          sizeof(CERT_CONTEXT), TRUE);
+        DPRINTF("%s is back from CRYPT_CollectionCreateContextFromChild\n", __func__);
 
         if (context)
             context->hCertStore = store;
@@ -214,7 +238,7 @@ static void *CRYPT_CollectionEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     PWINE_COLLECTIONSTORE cs = (PWINE_COLLECTIONSTORE)store;
     void *ret;
 
-    TRACE("(%p, %p)\n", store, pPrev);
+//    DPRINTF("%s(%p, %p)\n", __func__, store, pPrev);
 
     EnterCriticalSection(&cs->cs);
     if (pPrev)
@@ -246,8 +270,8 @@ static void *CRYPT_CollectionEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     }
     LeaveCriticalSection(&cs->cs);
     if (ret)
-        ((PCERT_CONTEXT)ret)->hCertStore = store;
-    TRACE("returning %p\n", ret);
+        ((PCERT_CONTEXT)ret)->hCertStore = CertDuplicateStore(store);
+//    DPRINTF("%s: returning %p\n", __func__, ret);
     return ret;
 }
 
@@ -548,8 +572,9 @@ BOOL WINAPI CertAddStoreToCollection(HCERTSTORE hCollectionStore,
     entry = CryptMemAlloc(sizeof(WINE_STORE_LIST_ENTRY));
     if (entry)
     {
-        InterlockedIncrement(&sibling->ref);
-        TRACE("sibling %p's ref count is %d\n", sibling, sibling->ref);
+//        InterlockedIncrement(&sibling->ref);
+        CertDuplicateStore(sibling);
+        DPRINTF("%s: sibling %p's ref count is %d\n", __func__, sibling, sibling->ref);
         entry->store = sibling;
         entry->dwUpdateFlags = dwUpdateFlags;
         entry->dwPriority = dwPriority;

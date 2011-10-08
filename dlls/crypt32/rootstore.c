@@ -48,6 +48,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(crypt);
 
 #define INITIAL_CERT_BUFFER 1024
 
+HCERTSTORE store_to_watch = NULL;
+
 struct DynamicBuffer
 {
     DWORD allocated;
@@ -235,6 +237,33 @@ static const char *get_cert_common_name(PCCERT_CONTEXT cert)
     return name;
 }
 
+void dump_cert_id(PCCERT_CONTEXT pCertContext) {
+    BOOL ret;
+    DWORD size = 0;
+    int i;
+    if (!pCertContext) {
+        DPRINTF("really NULL\n");
+        return;
+    }
+    ret = CertGetCertificateContextProperty(pCertContext,
+     CERT_KEY_IDENTIFIER_PROP_ID, NULL, &size);
+    if (ret)
+    {
+        LPBYTE buf = CryptMemAlloc(size);
+
+        if (buf)
+        {
+            CertGetCertificateContextProperty(pCertContext,
+             CERT_KEY_IDENTIFIER_PROP_ID, buf, &size);
+            DPRINTF("ID = ");
+            for (i = 0; i < size; i++)
+                DPRINTF("%02X", buf[i]);
+            CryptMemFree(buf);
+        }
+    } else
+        DPRINTF("no ID");
+}
+
 static void check_and_store_certs(HCERTSTORE from, HCERTSTORE to)
 {
     DWORD root_count = 0;
@@ -249,18 +278,25 @@ static void check_and_store_certs(HCERTSTORE from, HCERTSTORE to)
     if (engine)
     {
         PCCERT_CONTEXT cert = NULL;
+        store_to_watch = from;
 
         do {
+//            DPRINTF("%s calling CertEnumCertificatesInStore(%p, %p)\n", __func__, from, cert);
             cert = CertEnumCertificatesInStore(from, cert);
+//            DPRINTF("%s got %p, ", __func__, cert);
+//            dump_cert_id(cert);
+//            DPRINTF("\n");
+            DPRINTF(">>> %p's ref = %d\n", from, ((PWINECRYPT_CERTSTORE) from)->ref);
             if (cert)
             {
                 CERT_CHAIN_PARA chainPara = { sizeof(chainPara), { 0 } };
                 PCCERT_CHAIN_CONTEXT chain;
                 BOOL ret = CertGetCertificateChain(engine, cert, NULL, from,
                  &chainPara, 0, NULL, &chain);
+//                DPRINTF("%s got the chain\n", __func__);
 
                 if (!ret)
-                    TRACE("rejecting %s: %s\n", get_cert_common_name(cert),
+                    DPRINTF("rejecting %s: %s\n", get_cert_common_name(cert),
                      "chain creation failed");
                 else
                 {
@@ -281,7 +317,7 @@ static void check_and_store_certs(HCERTSTORE from, HCERTSTORE to)
                      * Thus, accept certs with any of the allowed errors.
                      */
                     if (chain->TrustStatus.dwErrorStatus & ~allowedErrors)
-                        TRACE("rejecting %s: %s\n", get_cert_common_name(cert),
+                        DPRINTF("rejecting %s: %s\n", get_cert_common_name(cert),
                          trust_status_to_str(chain->TrustStatus.dwErrorStatus &
                          ~CERT_TRUST_IS_UNTRUSTED_ROOT));
                     else
@@ -295,7 +331,9 @@ static void check_and_store_certs(HCERTSTORE from, HCERTSTORE to)
                                  CERT_STORE_ADD_NEW, NULL))
                                     root_count++;
                     }
+//                    DPRINTF("%s: Freeing chain %p\n", __func__, chain);
                     CertFreeCertificateChain(chain);
+//                    DPRINTF("%s: Freed\n", __func__);
                 }
             }
         } while (cert);
@@ -407,7 +445,7 @@ static BOOL import_certs_from_path(LPCSTR path, HCERTSTORE store,
     BOOL ret = FALSE;
     int fd;
 
-    TRACE("(%s, %p, %d)\n", debugstr_a(path), store, allow_dir);
+    DPRINTF("%s(%s, %p, %d)\n", __func__, debugstr_a(path), store, allow_dir);
 
     fd = open(path, O_RDONLY);
     if (fd != -1)
@@ -742,6 +780,8 @@ static void read_trusted_roots_from_known_locations(HCERTSTORE store)
     HCERTSTORE from = CertOpenStore(CERT_STORE_PROV_MEMORY,
      X509_ASN_ENCODING, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
 
+    DPRINTF("The 'from' is %p\n", from);
+
     if (from)
     {
         DWORD i;
@@ -780,6 +820,7 @@ static void read_trusted_roots_from_known_locations(HCERTSTORE store)
          i < sizeof(CRYPT_knownLocations) / sizeof(CRYPT_knownLocations[0]);
          i++)
             ret = import_certs_from_path(CRYPT_knownLocations[i], from, TRUE);
+        DPRINTF("All imported, goto checking nao!\n");
         check_and_store_certs(from, store);
     }
     CertCloseStore(from, 0);
@@ -802,8 +843,13 @@ static HCERTSTORE create_root_store(void)
          NULL
         };
 
+        DPRINTF("Our store to watch is %p\n", memStore);
+        store_to_watch = memStore;
+
         read_trusted_roots_from_known_locations(memStore);
+        DPRINTF("\nLocations read\n\n");
         add_ms_root_certs(memStore);
+        DPRINTF("\nMS stores added\n\n");
         root = CRYPT_ProvCreateStore(0, memStore, &provInfo);
     }
     TRACE("returning %p\n", root);

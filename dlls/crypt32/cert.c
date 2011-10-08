@@ -49,6 +49,9 @@ static BOOL CertContext_GetProperty(void *context, DWORD dwPropId,
 static BOOL CertContext_SetProperty(void *context, DWORD dwPropId,
  DWORD dwFlags, const void *pvData);
 
+PCCERT_CONTEXT context_to_free = NULL;
+PWINECRYPT_CERTSTORE store_to_close = NULL;
+
 BOOL WINAPI CertAddEncodedCertificateToStore(HCERTSTORE hCertStore,
  DWORD dwCertEncodingType, const BYTE *pbCertEncoded, DWORD cbCertEncoded,
  DWORD dwAddDisposition, PCCERT_CONTEXT *ppCertContext)
@@ -179,18 +182,26 @@ end:
 PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(
  PCCERT_CONTEXT pCertContext)
 {
+    PWINECRYPT_CERTSTORE hcs;
     TRACE("(%p)\n", pCertContext);
 
     if (!pCertContext)
         return NULL;
 
-    Context_AddRef((void *)pCertContext, sizeof(CERT_CONTEXT));
+    hcs = (PWINECRYPT_CERTSTORE) pCertContext->hCertStore;
+//    DPRINTF("Carefully trying %s on %p, hcs = %p\n", __func__, pCertContext, hcs);
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC
+            && (hcs->type == StoreTypeMem || hcs->type == StoreTypeProvider))
+        CertDuplicateStore(hcs);
+    else
+        Context_AddRef((void *)pCertContext, sizeof(CERT_CONTEXT));
     return pCertContext;
 }
 
 static void CertDataContext_Free(void *context)
 {
     PCERT_CONTEXT certContext = context;
+    DPRINTF("Cert %p is freed\n", context);
 
     CryptMemFree(certContext->pbCertEncoded);
     LocalFree(certContext->pCertInfo);
@@ -198,11 +209,19 @@ static void CertDataContext_Free(void *context)
 
 BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
 {
+    PWINECRYPT_CERTSTORE hcs;
     BOOL ret = TRUE;
 
-    TRACE("(%p)\n", pCertContext);
+//    DPRINTF("%s(%p)\n", __func__, pCertContext);
 
-    if (pCertContext)
+    if (!pCertContext)
+        return TRUE;
+
+    hcs = (PWINECRYPT_CERTSTORE) pCertContext->hCertStore;
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC
+            && (hcs->type == StoreTypeMem || hcs->type == StoreTypeProvider))
+        CertCloseStore(hcs, 0);
+    else
         ret = Context_Release((void *)pCertContext, sizeof(CERT_CONTEXT),
          CertDataContext_Free);
     return ret;
@@ -1280,11 +1299,15 @@ static BOOL compare_cert_by_subject_cert(PCCERT_CONTEXT pCertContext,
     return ret;
 }
 
+extern void *id_to_watch;
 static BOOL compare_cert_by_cert_id(PCCERT_CONTEXT pCertContext, DWORD dwType,
  DWORD dwFlags, const void *pvPara)
 {
     CERT_ID *id = (CERT_ID *)pvPara;
     BOOL ret;
+    int want_to_trace = (pvPara == id_to_watch);
+//    if (want_to_trace)
+//        DPRINTF("yay, we're in the compare func now!\n");
 
     switch (id->dwIdChoice)
     {
