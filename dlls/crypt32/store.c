@@ -1230,8 +1230,9 @@ HCERTSTORE WINAPI CertDuplicateStore(HCERTSTORE hCertStore)
 
     if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC) {
         if (hcs->type == StoreTypeProvider) {
+//            DPRINTF("Forwarding duplicate from %p to ", hcs);
             hcs = ((struct WINECRYPT_PROVSTORE *) hcs)->memStore;
-            DPRINTF("%p\n", hcs);
+//            DPRINTF("%p\n", hcs);
         }
         InterlockedIncrement(&hcs->ref);
         if (hCertStore == store_to_close || hCertStore == store_to_watch)
@@ -1255,6 +1256,7 @@ BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
     if (hcs->type == StoreTypeProvider) {
         orig = hcs;
         hcs = ((struct WINECRYPT_PROVSTORE *) orig)->memStore;
+//        DPRINTF("Forwarding close from %p to %p\n", orig, hcs);
     }
 
     if (hcs->ref <= 0)

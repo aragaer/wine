@@ -207,6 +207,27 @@ BOOL Context_Release(void *context, size_t contextSize,
     return ret;
 }
 
+BOOL Context_Release2(void *context, size_t contextSize,
+ ContextFreeFunc contextFree)
+{
+    PBASE_CONTEXT base = BASE_CONTEXT_FROM_CONTEXT(context, contextSize);
+    BOOL ret = TRUE;
+
+    if (base->ref <= 0)
+    {
+        ERR("%p's ref count is %d\n", context, base->ref);
+        return FALSE;
+    }
+    if (InterlockedDecrement(&base->ref) == 0)
+    {
+//        DPRINTF("%s: freeing %p\n", __func__, context);
+        contextFree(context);
+        CryptMemFree(context);
+    }
+//    else
+//        DPRINTF("%s: %p's ref count is %d\n", __func__, context, base->ref);
+}
+
 void Context_CopyProperties(const void *to, const void *from,
  size_t contextSize)
 {

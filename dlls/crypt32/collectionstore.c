@@ -150,29 +150,40 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
     {
 //        DPRINTF("Magic: get linked context for %p\n", pPrev);
         child = Context_GetLinkedContext(pPrev, contextSize);
-//        DPRINTF("Good, now free %p and nothing else\n", pPrev);
+/*
         if (*REF_FROM_CONTEXT(pPrev, sizeof(CERT_CONTEXT)) == 1)
             // It is going to die, reduce ref counter on collection
             InterlockedDecrement(&store->hdr.ref);
         else
             // otherwise - duplicate the child (so it its ref counter isnt reduced)
             contextInterface->duplicate(child);
-        
-        contextInterface->free(pPrev);
+*/
+//        DPRINTF("%s: %p's ref before enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
+//        DPRINTF("It will try to free the child, but it should not. AddRef\n");
+
+        contextInterface->duplicate(child);
 
 //        DPRINTF("Neat, now go into enum with %p as prev\n", child);
         child = contextFuncs->enumContext(storeEntry->store, child);
-//        DPRINTF("And now %p decrements its own ref!\n", store);
-//        DPRINTF("%s: %p's ref = %d\n", __func__, store, store->hdr.ref);
+//        DPRINTF("%s: %p's ref after enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
+//        DPRINTF("Good, now free %p\n", pPrev);
+        contextInterface->free(pPrev);
+//        DPRINTF("%s: %p is freed\n", __func__, pPrev);
+//        DPRINTF("%s: %p's ref after free %d\n", __func__, storeEntry->store, storeEntry->store->ref);
         pPrev = NULL;
     }
     else
+    {
+//        DPRINTF("%s: %p's ref before enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
         child = contextFuncs->enumContext(storeEntry->store, NULL);
+//        DPRINTF("%s: %p's ref after enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
+    }
     if (child) {
 //        DPRINTF("%s is calling CRYPT_CollectionCreateContextFromChild\n", __func__);
         ret = CRYPT_CollectionCreateContextFromChild(store, storeEntry, child,
          contextSize, FALSE);
 //        DPRINTF("%s is back from CRYPT_CollectionCreateContextFromChild\n", __func__);
+//        DPRINTF("%s: %p's ref after context from child %d\n", __func__, storeEntry->store, storeEntry->store->ref);
     }
     else
     {
