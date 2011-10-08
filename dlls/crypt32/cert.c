@@ -202,6 +202,17 @@ static void CertDataContext_Free(void *context)
     LocalFree(certContext->pCertInfo);
 }
 
+static void CollectionCert_Free(void *context)
+{
+    PCERT_CONTEXT certContext = context;
+
+    CertFreeCertificateContext(Context_GetLinkedContext(certContext,
+                            sizeof(CERT_CONTEXT)));
+    CertCloseStore(certContext->hCertStore, 0);
+}
+
+BOOL Context_Release2(void *, size_t, ContextFreeFunc);
+
 BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     PWINECRYPT_CERTSTORE hcs;
@@ -213,10 +224,20 @@ BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
         return TRUE;
 
     hcs = (PWINECRYPT_CERTSTORE) pCertContext->hCertStore;
-    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC
-            && (hcs->type == StoreTypeMem || hcs->type == StoreTypeProvider))
-        CertCloseStore(hcs, 0);
-    else
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC) {
+        switch (hcs->type) {
+        case StoreTypeCollection:
+            ret = Context_Release2((void *)pCertContext, sizeof(CERT_CONTEXT),
+             CollectionCert_Free);
+            break;
+        case StoreTypeMem:
+        case StoreTypeProvider:
+            ret = CertCloseStore(hcs, 0);
+            break;
+        default:
+            break;
+        }
+    } else
         ret = Context_Release((void *)pCertContext, sizeof(CERT_CONTEXT),
          CertDataContext_Free);
     return ret;

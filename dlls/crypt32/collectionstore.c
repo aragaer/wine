@@ -133,7 +133,6 @@ static BOOL CRYPT_CollectionAddContext(PWINE_COLLECTIONSTORE store,
  * Returns NULL if the collection contains no more items or on error.
  * Assumes the collection store's lock is held.
  */
-#define REF_FROM_CONTEXT(p, s) ((LONG *)((LPBYTE)(p) + (s)))
 static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
  PWINE_STORE_LIST_ENTRY storeEntry, const CONTEXT_FUNCS *contextFuncs,
  PCWINE_CONTEXT_INTERFACE contextInterface, void *pPrev, size_t contextSize)
@@ -145,17 +144,13 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
 
     if (pPrev)
     {
+        /* Ref-counting funny business: "duplicate" (addref) the child, because
+         * the free(pPrev) below can cause the ref count to become negative.
+         */
         child = Context_GetLinkedContext(pPrev, contextSize);
-        if (*REF_FROM_CONTEXT(pPrev, sizeof(CERT_CONTEXT)) == 1)
-            // It is going to die, reduce ref counter on collection
-            InterlockedDecrement(&store->hdr.ref);
-        else
-            // otherwise - duplicate the child (so it its ref counter isn't reduced)
-            contextInterface->duplicate(child);
-        
-        contextInterface->free(pPrev);
-
+        contextInterface->duplicate(child);
         child = contextFuncs->enumContext(storeEntry->store, child);
+        contextInterface->free(pPrev);
         pPrev = NULL;
     }
     else
