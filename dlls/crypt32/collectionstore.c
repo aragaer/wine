@@ -136,7 +136,6 @@ static BOOL CRYPT_CollectionAddContext(PWINE_COLLECTIONSTORE store,
  * Returns NULL if the collection contains no more items or on error.
  * Assumes the collection store's lock is held.
  */
-#define REF_FROM_CONTEXT(p, s) ((LONG *)((LPBYTE)(p) + (s)))
 static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
  PWINE_STORE_LIST_ENTRY storeEntry, const CONTEXT_FUNCS *contextFuncs,
  PCWINE_CONTEXT_INTERFACE contextInterface, void *pPrev, size_t contextSize)
@@ -150,19 +149,9 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
     {
 //        DPRINTF("Magic: get linked context for %p\n", pPrev);
         child = Context_GetLinkedContext(pPrev, contextSize);
-/*
-        if (*REF_FROM_CONTEXT(pPrev, sizeof(CERT_CONTEXT)) == 1)
-            // It is going to die, reduce ref counter on collection
-            InterlockedDecrement(&store->hdr.ref);
-        else
-            // otherwise - duplicate the child (so it its ref counter isnt reduced)
-            contextInterface->duplicate(child);
-*/
 //        DPRINTF("%s: %p's ref before enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
 //        DPRINTF("It will try to free the child, but it should not. AddRef\n");
-
         contextInterface->duplicate(child);
-
 //        DPRINTF("Neat, now go into enum with %p as prev\n", child);
         child = contextFuncs->enumContext(storeEntry->store, child);
 //        DPRINTF("%s: %p's ref after enum %d\n", __func__, storeEntry->store, storeEntry->store->ref);
