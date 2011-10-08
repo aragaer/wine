@@ -133,6 +133,7 @@ static BOOL CRYPT_CollectionAddContext(PWINE_COLLECTIONSTORE store,
  * Returns NULL if the collection contains no more items or on error.
  * Assumes the collection store's lock is held.
  */
+#define REF_FROM_CONTEXT(p, s) ((LONG *)((LPBYTE)(p) + (s)))
 static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
  PWINE_STORE_LIST_ENTRY storeEntry, const CONTEXT_FUNCS *contextFuncs,
  PCWINE_CONTEXT_INTERFACE contextInterface, void *pPrev, size_t contextSize)
@@ -144,13 +145,17 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
 
     if (pPrev)
     {
-        /* Ref-counting funny business: "duplicate" (addref) the child, because
-         * the free(pPrev) below can cause the ref count to become negative.
-         */
         child = Context_GetLinkedContext(pPrev, contextSize);
-        contextInterface->duplicate(child);
-        child = contextFuncs->enumContext(storeEntry->store, child);
+        if (*REF_FROM_CONTEXT(pPrev, sizeof(CERT_CONTEXT)) == 1)
+            // It is going to die, reduce ref counter on collection
+            InterlockedDecrement(&store->hdr.ref);
+        else
+            // otherwise - duplicate the child (so it its ref counter isn't reduced)
+            contextInterface->duplicate(child);
+        
         contextInterface->free(pPrev);
+
+        child = contextFuncs->enumContext(storeEntry->store, child);
         pPrev = NULL;
     }
     else
@@ -246,7 +251,7 @@ static void *CRYPT_CollectionEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     }
     LeaveCriticalSection(&cs->cs);
     if (ret)
-        ((PCERT_CONTEXT)ret)->hCertStore = store;
+        ((PCERT_CONTEXT)ret)->hCertStore = CertDuplicateStore(store);
     TRACE("returning %p\n", ret);
     return ret;
 }
@@ -548,7 +553,7 @@ BOOL WINAPI CertAddStoreToCollection(HCERTSTORE hCollectionStore,
     entry = CryptMemAlloc(sizeof(WINE_STORE_LIST_ENTRY));
     if (entry)
     {
-        InterlockedIncrement(&sibling->ref);
+        CertDuplicateStore(sibling);
         TRACE("sibling %p's ref count is %d\n", sibling, sibling->ref);
         entry->store = sibling;
         entry->dwUpdateFlags = dwUpdateFlags;

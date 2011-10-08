@@ -88,6 +88,11 @@ static void *CRYPT_ProvEnumCert(PWINECRYPT_CERTSTORE store, void *pPrev)
     PWINE_PROVIDERSTORE ps = (PWINE_PROVIDERSTORE)store;
     void *ret;
 
+    if (pPrev) {
+        /* we're still dirty! */
+        ((PCERT_CONTEXT)pPrev)->hCertStore = ps->memStore;
+    }
+
     ret = ps->memStore->certs.enumContext(ps->memStore, pPrev);
     if (ret)
     {

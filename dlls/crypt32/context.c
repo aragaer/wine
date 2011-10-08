@@ -107,6 +107,7 @@ void Context_AddRef(void *context, size_t contextSize)
 
     InterlockedIncrement(&baseContext->ref);
     TRACE("%p's ref count is %d\n", context, baseContext->ref);
+#if 0
     if (baseContext->type == ContextTypeLink)
     {
         void *linkedContext = Context_GetLinkedContext(context, contextSize);
@@ -137,6 +138,7 @@ void Context_AddRef(void *context, size_t contextSize)
             TRACE("%p's ref count is %d\n", linkedContext, linkedBase->ref);
         }
     }
+#endif
 }
 
 void *Context_GetExtra(const void *context, size_t contextSize)
@@ -177,6 +179,7 @@ BOOL Context_Release(void *context, size_t contextSize,
         ERR("%p's ref count is %d\n", context, base->ref);
         return FALSE;
     }
+#if 0
     if (base->type == ContextTypeLink)
     {
         /* The linked context is of the same type as this, so release
@@ -186,6 +189,7 @@ BOOL Context_Release(void *context, size_t contextSize,
          ((PLINK_CONTEXT)base)->linked, contextSize), contextSize,
          dataContextFree);
     }
+#endif
     if (InterlockedDecrement(&base->ref) == 0)
     {
         TRACE("freeing %p\n", context);

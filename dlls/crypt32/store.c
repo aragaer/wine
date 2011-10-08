@@ -1205,20 +1205,30 @@ PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE hCertStore,
     return ret;
 }
 
+struct WINECRYPT_PROVSTORE {
+    WINECRYPT_CERTSTORE hdr;
+    DWORD padding;
+    PWINECRYPT_CERTSTORE memStore;
+};
+
 HCERTSTORE WINAPI CertDuplicateStore(HCERTSTORE hCertStore)
 {
     WINECRYPT_CERTSTORE *hcs = hCertStore;
 
     TRACE("(%p)\n", hCertStore);
 
-    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC)
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC) {
+        if (hcs->type == StoreTypeProvider) {
+            hcs = ((struct WINECRYPT_PROVSTORE *) hcs)->memStore;
+        }
         InterlockedIncrement(&hcs->ref);
+    }
     return hCertStore;
 }
 
 BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
 {
-    WINECRYPT_CERTSTORE *hcs = hCertStore;
+    WINECRYPT_CERTSTORE *hcs = hCertStore, *orig = NULL;
 
     TRACE("(%p, %08x)\n", hCertStore, dwFlags);
 
@@ -1228,11 +1238,21 @@ BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
     if ( hcs->dwMagic != WINE_CRYPTCERTSTORE_MAGIC )
         return FALSE;
 
+    if (hcs->type == StoreTypeProvider) {
+        orig = hcs;
+        hcs = ((struct WINECRYPT_PROVSTORE *) orig)->memStore;
+    }
+
     if (hcs->ref <= 0)
         ERR("%p's ref count is %d\n", hcs, hcs->ref);
     if (InterlockedDecrement(&hcs->ref) == 0)
     {
         TRACE("%p's ref count is 0, freeing\n", hcs);
+        if (orig) {
+            hcs->ref = 1;
+            hcs = orig;
+            hcs->ref = 0;
+        }
         hcs->dwMagic = 0;
         hcs->closeStore(hcs, dwFlags);
     }
