@@ -185,6 +185,7 @@ PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(
     if (!pCertContext)
         return NULL;
 
+    /* see comment in CertFreeCertificateContext below */
     hcs = (PWINECRYPT_CERTSTORE) pCertContext->hCertStore;
     if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC
             && (hcs->type == StoreTypeMem || hcs->type == StoreTypeProvider))
@@ -211,8 +212,6 @@ static void CollectionCert_Free(void *context)
     CertCloseStore(certContext->hCertStore, 0);
 }
 
-BOOL Context_Release2(void *, size_t, ContextFreeFunc);
-
 BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     PWINECRYPT_CERTSTORE hcs;
@@ -224,20 +223,31 @@ BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
         return TRUE;
 
     hcs = (PWINECRYPT_CERTSTORE) pCertContext->hCertStore;
-    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC) {
-        switch (hcs->type) {
+    if (hcs && hcs->dwMagic == WINE_CRYPTCERTSTORE_MAGIC)
+    {
+        switch (hcs->type)
+        {
         case StoreTypeCollection:
+            /* If ref counter is down to 0, adjust collection's and linked
+             * certificate's ref counts.
+             */
             ret = Context_Release2((void *)pCertContext, sizeof(CERT_CONTEXT),
              CollectionCert_Free);
             break;
         case StoreTypeMem:
         case StoreTypeProvider:
+            /* These two types of store always point to the certificate.
+             * As long as store's ref count is >0 the certificate should not
+             * be freed. Once store's ref count is 0, certificate will be freed
+             * too.
+             */
             ret = CertCloseStore(hcs, 0);
             break;
         default:
             break;
         }
-    } else
+    }
+    else
         ret = Context_Release((void *)pCertContext, sizeof(CERT_CONTEXT),
          CertDataContext_Free);
     return ret;

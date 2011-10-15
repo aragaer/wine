@@ -107,38 +107,6 @@ void Context_AddRef(void *context, size_t contextSize)
 
     InterlockedIncrement(&baseContext->ref);
     TRACE("%p's ref count is %d\n", context, baseContext->ref);
-#if 0
-    if (baseContext->type == ContextTypeLink)
-    {
-        void *linkedContext = Context_GetLinkedContext(context, contextSize);
-        PBASE_CONTEXT linkedBase = BASE_CONTEXT_FROM_CONTEXT(linkedContext,
-         contextSize);
-
-        /* Add-ref the linked contexts too */
-        while (linkedContext && linkedBase->type == ContextTypeLink)
-        {
-            InterlockedIncrement(&linkedBase->ref);
-            TRACE("%p's ref count is %d\n", linkedContext, linkedBase->ref);
-            linkedContext = Context_GetLinkedContext(linkedContext,
-             contextSize);
-            if (linkedContext)
-                linkedBase = BASE_CONTEXT_FROM_CONTEXT(linkedContext,
-                 contextSize);
-            else
-                linkedBase = NULL;
-        }
-        if (linkedContext)
-        {
-            /* It's not a link context, so it wasn't add-ref'ed in the while
-             * loop, so add-ref it here.
-             */
-            linkedBase = BASE_CONTEXT_FROM_CONTEXT(linkedContext,
-             contextSize);
-            InterlockedIncrement(&linkedBase->ref);
-            TRACE("%p's ref count is %d\n", linkedContext, linkedBase->ref);
-        }
-    }
-#endif
 }
 
 void *Context_GetExtra(const void *context, size_t contextSize)
@@ -179,17 +147,6 @@ BOOL Context_Release(void *context, size_t contextSize,
         ERR("%p's ref count is %d\n", context, base->ref);
         return FALSE;
     }
-#if 0
-    if (base->type == ContextTypeLink)
-    {
-        /* The linked context is of the same type as this, so release
-         * it as well, using the same offset and data free function.
-         */
-        ret = Context_Release(CONTEXT_FROM_BASE_CONTEXT(
-         ((PLINK_CONTEXT)base)->linked, contextSize), contextSize,
-         dataContextFree);
-    }
-#endif
     if (InterlockedDecrement(&base->ref) == 0)
     {
         TRACE("freeing %p\n", context);
@@ -198,6 +155,16 @@ BOOL Context_Release(void *context, size_t contextSize,
             ContextPropertyList_Free(((PDATA_CONTEXT)base)->properties);
             dataContextFree(context);
         }
+        else // if (base->type == ContextTypeLink)
+        {
+            /* The linked context is of the same type as this, so release
+             * it as well, using the same offset and data free function.
+             */
+            ret = Context_Release(CONTEXT_FROM_BASE_CONTEXT(
+             ((PLINK_CONTEXT)base)->linked, contextSize), contextSize,
+             dataContextFree);
+        }
+
         CryptMemFree(context);
     }
     else

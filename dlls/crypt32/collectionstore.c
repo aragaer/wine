@@ -145,7 +145,9 @@ static void *CRYPT_CollectionAdvanceEnum(PWINE_COLLECTIONSTORE store,
     if (pPrev)
     {
         /* Ref-counting funny business: "duplicate" (addref) the child, because
-         * the free(pPrev) below can cause the ref count to become negative.
+         * enumContext will "close" (release) it assuming we no longer keep
+         * a reference to it.
+         * It will be actually freed in free(pPrev) if needed.
          */
         child = Context_GetLinkedContext(pPrev, contextSize);
         contextInterface->duplicate(child);

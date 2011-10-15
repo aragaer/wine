@@ -365,13 +365,20 @@ void Context_AddRef(void *context, size_t contextSize) DECLSPEC_HIDDEN;
 
 typedef void (*ContextFreeFunc)(void *context);
 
-/* Decrements context's ref count.  If context is a link context, releases its
- * linked context as well.
+/* Decrements context's ref count.  If a link context has its ref count reach 0,
+ * releases its linked context as well.
  * If a data context has its ref count reach 0, calls dataContextFree on it.
  * Returns FALSE if the reference count is <= 0 when called.
  */
 BOOL Context_Release(void *context, size_t contextSize,
  ContextFreeFunc dataContextFree) DECLSPEC_HIDDEN;
+
+/* Decrements context's ref count.  If the context has its ref count reach 0,
+ * calls ContextFreeFunc on it.
+ * Returns FALSE if the reference count is <= 0 when called.
+ */
+
+BOOL Context_Release2(void *, size_t, ContextFreeFunc) DECLSPEC_HIDDEN;
 
 /**
  *  Context property list functions

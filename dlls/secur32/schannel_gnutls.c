@@ -345,6 +345,7 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
     if (!temp_store)
         return GetLastError();
 
+    TRACE("Temporary certificate store %p created\n", temp_store);
     for (i = 0; i < list_size; i++)
         if (!CertAddEncodedCertificateToStore(temp_store,
                 X509_ASN_ENCODING, datum[i].data, datum[i].size,
@@ -354,6 +355,7 @@ SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session
     CertCloseStore(temp_store, 0);
 
     return SEC_E_OK;
+
 out_free_store:
     err = GetLastError();
     CertCloseStore(temp_store, CERT_CLOSE_STORE_FORCE_FLAG);

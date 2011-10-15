@@ -1205,6 +1205,13 @@ PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE hCertStore,
     return ret;
 }
 
+/* Some certificates stored in the Provider Store are pointing to memStore.
+ * Other are pointing to the Provider Store itself. The total ref count on
+ * all object is still the same. The memStore's ref count is the one used for
+ * keeping the ref count of all objects.
+ * All calls to Duplicate or Close to provStore will be forwarded to the
+ * memstore inside it.
+ */
 struct WINECRYPT_PROVSTORE {
     WINECRYPT_CERTSTORE hdr;
     DWORD padding;
@@ -1248,12 +1255,12 @@ BOOL WINAPI CertCloseStore(HCERTSTORE hCertStore, DWORD dwFlags)
     if (InterlockedDecrement(&hcs->ref) == 0)
     {
         TRACE("%p's ref count is 0, freeing\n", hcs);
-        if (orig) {
+        if (orig) { // this is a prov store and it should be freed now
             hcs->ref = 1;
             hcs = orig;
             hcs->ref = 0;
         }
-        hcs->dwMagic = 0;
+        hcs->dwMagic = 0; // otherwise FreeCert will trigger CloseStore again
         hcs->closeStore(hcs, dwFlags);
     }
     else
